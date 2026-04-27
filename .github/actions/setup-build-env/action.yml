@@ -1,0 +1,28 @@
+name: setup-build-env
+description: Install cross-compilation toolchain for 6-platform Rust builds on macOS
+
+runs:
+  using: composite
+  steps:
+    - name: Install zig + llvm (for cargo-zigbuild / Linux musl targets)
+      # cargo-zigbuild's wrapper symlinks `ar` → /opt/homebrew/opt/llvm/bin/llvm-ar
+      # because zig 0.16's bundled `zig ar` is broken for create operations on
+      # macOS. Without Homebrew llvm the symlink dangles and cc-rs falls back to
+      # Apple's /usr/bin/ar, which can't archive ELF .o files (silent failure
+      # → missing .a → "unable to open libring_core_*.a" link error).
+      shell: bash
+      run: brew install zig llvm
+
+    - name: Install cargo-zigbuild
+      shell: bash
+      run: cargo install cargo-zigbuild --locked
+
+    - name: Install llvm-mingw (for Windows gnullvm targets)
+      shell: bash
+      run: |
+        LLVM_MINGW_VERSION="20241030"
+        LLVM_MINGW_ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-macos-universal.tar.xz"
+        curl -sSL "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${LLVM_MINGW_ARCHIVE}" \
+          -o "/tmp/${LLVM_MINGW_ARCHIVE}"
+        tar -xf "/tmp/${LLVM_MINGW_ARCHIVE}" -C /tmp
+        echo "/tmp/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-macos-universal/bin" >> "$GITHUB_PATH"

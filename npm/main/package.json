@@ -1,0 +1,26 @@
+{
+  "name": "jellyfin-agent-cli",
+  "version": "0.0.0-development",
+  "description": "Full-featured command line client for Jellyfin media browsing, playback, administration, and automation workflows.",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ByteLandTechnology/jellyfin-agent-cli"
+  },
+  "type": "module",
+  "bin": {
+    "jellyfin-agent-cli": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "optionalDependencies": {}
+}
