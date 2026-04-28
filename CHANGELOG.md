@@ -2,7 +2,7 @@
 
 ### Features
 
-* implement Jellyfin CLI core structure ([c4182b8](https://github.com/ByteLandTechnology/jellyfin-agent-cli/commit/c4182b8194f96ac7d6cdfc58dee7d07cccd09fe3))
+- implement Jellyfin CLI core structure ([c4182b8](https://github.com/ByteLandTechnology/jellyfin-agent-cli/commit/c4182b8194f96ac7d6cdfc58dee7d07cccd09fe3))
 
 # Changelog
 
