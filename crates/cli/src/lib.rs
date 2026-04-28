@@ -113,6 +113,24 @@ enum Commands {
         limit: Option<u32>,
     },
 
+    /// Download a media item
+    Download {
+        /// Item ID to download
+        item_id: String,
+
+        /// Output file path
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Resume partial download
+        #[arg(long)]
+        resume: bool,
+
+        /// Verify checksum after download
+        #[arg(long)]
+        verify: bool,
+    },
+
     /// Latest media
     Latest {
         /// Limit results
@@ -698,6 +716,14 @@ pub(crate) async fn execute_command(cli: Cli) -> jellyfin_core::Result<CommandOu
         Commands::Continue { limit } => {
             commands::playback::continue_watching(limit, profile.as_deref()).await
         }
+        Commands::Download {
+            item_id,
+            output,
+            resume,
+            verify,
+        } => {
+            commands::download::download(item_id, output, resume, verify, profile.as_deref()).await
+        }
         Commands::Latest { limit } => commands::items::latest(limit, profile.as_deref()).await,
         Commands::Libraries { action } => {
             commands::library::handle(action, profile.as_deref()).await
@@ -1171,6 +1197,7 @@ fn command_uses_profile_override(command: &Commands) -> bool {
             | Commands::Pause
             | Commands::Resume
             | Commands::Continue { .. }
+            | Commands::Download { .. }
             | Commands::Latest { .. }
             | Commands::Libraries { .. }
             | Commands::Items { .. }

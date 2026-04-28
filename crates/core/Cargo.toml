@@ -16,6 +16,8 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
+indicatif = { workspace = true }
+futures-util = { workspace = true }
 sha2 = "0.10"
 
 # Config

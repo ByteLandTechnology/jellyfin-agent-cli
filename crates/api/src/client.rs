@@ -588,6 +588,39 @@ impl JellyfinClient {
         Ok(())
     }
 
+    // ===== Remote Control =====
+
+    /// Send pause command to a remote session
+    pub async fn send_pause(&self, session_id: &str) -> Result<()> {
+        let path = format!("/Sessions/{}/Playing/Pause", session_id);
+        self.post_void(&path, &EmptyBody).await
+    }
+
+    /// Send unpause command to a remote session
+    pub async fn send_unpause(&self, session_id: &str) -> Result<()> {
+        let path = format!("/Sessions/{}/Playing/Unpause", session_id);
+        self.post_void(&path, &EmptyBody).await
+    }
+
+    /// Send stop command to a remote session
+    pub async fn send_stop(&self, session_id: &str) -> Result<()> {
+        let path = format!("/Sessions/{}/Playing/Stop", session_id);
+        self.post_void(&path, &EmptyBody).await
+    }
+
+    /// Send seek command to a remote session
+    pub async fn send_seek(&self, session_id: &str, seek_position_ticks: u64) -> Result<()> {
+        #[derive(Serialize)]
+        struct SeekRequest {
+            #[serde(rename = "SeekPositionTicks")]
+            seek_position_ticks: u64,
+        }
+
+        let path = format!("/Sessions/{}/Playing/Seek", session_id);
+        self.post_void(&path, &SeekRequest { seek_position_ticks })
+            .await
+    }
+
     /// POST request without expected response body
     async fn post_void<B: Serialize>(&self, path: &str, body: &B) -> Result<()> {
         let builder = self.request(reqwest::Method::POST, path)?.json(body);
@@ -605,6 +638,36 @@ impl JellyfinClient {
             return Err(JellyfinError::api_error(format!("{}: {}", status, text)));
         }
         Ok(())
+    }
+
+    // ===== Download =====
+
+    /// Get a download stream for a media item.
+    /// Returns the raw response for streaming download.
+    pub async fn download_stream(&self, item_id: &str) -> Result<reqwest::Response> {
+        let path = format!("/Items/{}/Download", item_id);
+        let builder = self.request(reqwest::Method::GET, &path)?;
+        let response = builder.send().await.map_err(JellyfinError::from)?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(JellyfinError::auth_failed("Invalid or expired token"));
+        }
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(JellyfinError::not_found(format!(
+                "item {} for download",
+                item_id
+            )));
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read error".to_string());
+            return Err(JellyfinError::api_error(format!("{}: {}", status, text)));
+        }
+
+        Ok(response)
     }
 
     // ===== Favorites =====

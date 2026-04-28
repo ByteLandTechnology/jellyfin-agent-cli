@@ -82,7 +82,7 @@ pub struct StopOptions {
 impl StopOptions {
     pub fn execute(&self) -> Result<CommandOutput> {
         let env = E2EEnvironment::new();
-        let manager = ServerManager::new(env.clone());
+        let mut manager = ServerManager::new(env.clone());
 
         // Stop the server
         manager

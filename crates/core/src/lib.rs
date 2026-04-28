@@ -16,9 +16,9 @@ pub use e2e::E2EEnvironment;
 pub use error::{ErrorCategory, JellyfinError, Result};
 pub use media::{
     BIG_BUCK_BUNNY_CHECKSUM, BIG_BUCK_BUNNY_NAME, BIG_BUCK_BUNNY_URL, CLASSICAL_MUSIC_NAME,
-    CLASSICAL_MUSIC_URLS, LicenseType, MediaCache, MediaEntry, all_media_sources,
-    big_buck_bunny_entry, classical_music_entries, download_file, download_file_with_limit,
-    sha256_checksum, verify_checksum,
+    CLASSICAL_MUSIC_URLS, DownloadResult, LicenseType, MediaCache, MediaEntry, all_media_sources,
+    big_buck_bunny_entry, classical_music_entries, download_file, download_file_async,
+    download_file_with_limit, format_bytes, sha256_checksum, verify_checksum,
 };
 pub use output::{DataValue, ErrorResponse, OutputFormat, Response, ResponseResult};
 pub use server::ServerManager;

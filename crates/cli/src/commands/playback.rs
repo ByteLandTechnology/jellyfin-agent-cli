@@ -1,7 +1,7 @@
 //! Playback commands
 
 use crate::output::{CommandOutput, NextStep, OutputEnvelope};
-use jellyfin_api::{ItemQuery, JellyfinClient};
+use jellyfin_api::{ItemQuery, JellyfinClient, SessionInfo};
 use jellyfin_core::Result;
 
 /// Play a media item
@@ -72,32 +72,62 @@ pub async fn play(
     Ok(envelope)
 }
 
-/// Pause playback
-pub async fn pause(_profile: Option<&str>) -> Result<CommandOutput> {
-    let envelope: CommandOutput = OutputEnvelope::success("jellyfin pause", "Playback paused")
-        .with_next_step(NextStep::new(
-            "resume",
-            "jellyfin resume",
-            "Resume playback",
-        ))
-        .with_next_step(NextStep::new(
-            "stop",
-            "jellyfin playback stop",
-            "Stop playback",
-        ));
+/// Pause playback on a remote session
+pub async fn pause(profile: Option<&str>) -> Result<CommandOutput> {
+    let client = JellyfinClient::from_config(profile).await?;
+    let (session_id, session) = find_active_session(&client).await?;
+    let item_name = session
+        .now_playing_item
+        .as_ref()
+        .map(|i| i.name.as_str())
+        .unwrap_or("unknown");
+
+    client.send_pause(&session_id).await?;
+
+    let envelope: CommandOutput =
+        OutputEnvelope::success("jellyfin pause", format!("Paused: {}", item_name))
+            .with_data(serde_json::json!({
+                "session_id": session_id,
+                "item": item_name
+            }))
+            .with_next_step(NextStep::new(
+                "resume",
+                "jellyfin resume",
+                "Resume playback",
+            ))
+            .with_next_step(NextStep::new(
+                "stop",
+                "jellyfin playback stop",
+                "Stop playback",
+            ));
 
     Ok(envelope)
 }
 
-/// Resume playback
-pub async fn resume(_profile: Option<&str>) -> Result<CommandOutput> {
-    let envelope: CommandOutput = OutputEnvelope::success("jellyfin resume", "Playback resumed")
-        .with_next_step(NextStep::new("pause", "jellyfin pause", "Pause playback"))
-        .with_next_step(NextStep::new(
-            "stop",
-            "jellyfin playback stop",
-            "Stop playback",
-        ));
+/// Resume playback on a remote session
+pub async fn resume(profile: Option<&str>) -> Result<CommandOutput> {
+    let client = JellyfinClient::from_config(profile).await?;
+    let (session_id, session) = find_active_session(&client).await?;
+    let item_name = session
+        .now_playing_item
+        .as_ref()
+        .map(|i| i.name.as_str())
+        .unwrap_or("unknown");
+
+    client.send_unpause(&session_id).await?;
+
+    let envelope: CommandOutput =
+        OutputEnvelope::success("jellyfin resume", format!("Resumed: {}", item_name))
+            .with_data(serde_json::json!({
+                "session_id": session_id,
+                "item": item_name
+            }))
+            .with_next_step(NextStep::new("pause", "jellyfin pause", "Pause playback"))
+            .with_next_step(NextStep::new(
+                "stop",
+                "jellyfin playback stop",
+                "Stop playback",
+            ));
 
     Ok(envelope)
 }
@@ -158,26 +188,101 @@ pub async fn handle(
 ) -> Result<CommandOutput> {
     match action {
         crate::PlaybackCommands::Info => {
-            let _client = JellyfinClient::from_config(profile).await?;
-            // TODO: Get actual playback info from sessions
-            let envelope: CommandOutput =
-                OutputEnvelope::success("jellyfin playback info", "No active playback session")
-                    .with_data(serde_json::json!({"status": "no active session"}));
+            let client = JellyfinClient::from_config(profile).await?;
+            let sessions = client.get_sessions().await?;
+            let active: Vec<&SessionInfo> = sessions
+                .iter()
+                .filter(|s| s.now_playing_item.is_some())
+                .collect();
+
+            if active.is_empty() {
+                return Ok(OutputEnvelope::success(
+                    "jellyfin playback info",
+                    "No active playback session",
+                )
+                .with_data(serde_json::json!({"status": "no active session"})));
+            }
+
+            let items: Vec<serde_json::Value> = active
+                .iter()
+                .map(|s| {
+                    let item = s.now_playing_item.as_ref().unwrap();
+                    let state = s.play_state.as_ref();
+                    serde_json::json!({
+                        "session_id": s.id,
+                        "device": s.device_name,
+                        "item_id": item.id,
+                        "title": item.name,
+                        "type": item.item_type,
+                        "is_paused": state.and_then(|p| p.is_paused),
+                        "position_ticks": state.and_then(|p| p.position_ticks),
+                        "volume_level": state.and_then(|p| p.volume_level),
+                    })
+                })
+                .collect();
+
+            let envelope: CommandOutput = OutputEnvelope::success(
+                "jellyfin playback info",
+                format!("{} active session(s)", items.len()),
+            )
+            .with_data(serde_json::json!({"sessions": items}))
+            .with_next_step(NextStep::new(
+                "pause",
+                "jellyfin pause",
+                "Pause playback",
+            ))
+            .with_next_step(NextStep::new(
+                "stop",
+                "jellyfin playback stop",
+                "Stop playback",
+            ));
 
             Ok(envelope)
         }
         crate::PlaybackCommands::Seek { position } => {
+            let client = JellyfinClient::from_config(profile).await?;
+            let (session_id, session) = find_active_session(&client).await?;
+            let seconds = parse_position(&position)?;
+            let ticks = seconds * 10_000_000;
+
+            client.send_seek(&session_id, ticks).await?;
+
+            let item_name = session
+                .now_playing_item
+                .as_ref()
+                .map(|i| i.name.as_str())
+                .unwrap_or("unknown");
+
             let envelope: CommandOutput = OutputEnvelope::success(
                 "jellyfin playback seek",
-                format!("Seeked to {}", position),
+                format!("Seeked {} to {}", item_name, position),
             )
+            .with_data(serde_json::json!({
+                "session_id": session_id,
+                "position": position,
+                "position_ticks": ticks
+            }))
             .with_next_step(NextStep::new("pause", "jellyfin pause", "Pause playback"));
 
             Ok(envelope)
         }
         crate::PlaybackCommands::Stop => {
+            let client = JellyfinClient::from_config(profile).await?;
+            let (session_id, session) = find_active_session(&client).await?;
+            let item_name = session
+                .now_playing_item
+                .as_ref()
+                .map(|i| i.name.as_str())
+                .unwrap_or("unknown");
+
+            client.send_stop(&session_id).await?;
+
             let envelope: CommandOutput =
-                OutputEnvelope::success("jellyfin playback stop", "Playback stopped")
+                OutputEnvelope::success("jellyfin playback stop", format!("Stopped: {}", item_name))
+                    .with_data(serde_json::json!({
+                        "session_id": session_id,
+                        "item": item_name
+                    }))
                     .with_next_step(NextStep::new(
                         "continue_watching",
                         "jellyfin continue",
@@ -187,9 +292,28 @@ pub async fn handle(
             Ok(envelope)
         }
         crate::PlaybackCommands::Queue => {
+            let client = JellyfinClient::from_config(profile).await?;
+            let sessions = client.get_sessions().await?;
+            let queue: Vec<serde_json::Value> = sessions
+                .iter()
+                .filter(|s| s.now_playing_item.is_some())
+                .map(|s| {
+                    let item = s.now_playing_item.as_ref().unwrap();
+                    let state = s.play_state.as_ref();
+                    serde_json::json!({
+                        "session_id": s.id,
+                        "device": s.device_name,
+                        "item_id": item.id,
+                        "title": item.name,
+                        "is_paused": state.and_then(|p| p.is_paused),
+                    })
+                })
+                .collect();
+
+            let count = queue.len();
             let envelope: CommandOutput =
-                OutputEnvelope::success("jellyfin playback queue", "Playback queue")
-                    .with_data(serde_json::json!({"queue": []}))
+                OutputEnvelope::success("jellyfin playback queue", format!("{} item(s) in queue", count))
+                    .with_data(serde_json::json!({"queue": queue}))
                     .with_next_step(NextStep::new(
                         "add_to_queue",
                         "jellyfin play <ITEM_ID>",
@@ -199,6 +323,20 @@ pub async fn handle(
             Ok(envelope)
         }
     }
+}
+
+/// Find an active session (one with now_playing_item) across all sessions
+async fn find_active_session(client: &JellyfinClient) -> Result<(String, SessionInfo)> {
+    let sessions = client.get_sessions().await?;
+    sessions
+        .into_iter()
+        .find(|s| s.now_playing_item.is_some())
+        .and_then(|s| s.id.clone().map(|id| (id, s)))
+        .ok_or_else(|| {
+            jellyfin_core::JellyfinError::not_found(
+                "active playback session".to_string(),
+            )
+        })
 }
 
 /// Parse position string (HH:MM:SS or seconds)

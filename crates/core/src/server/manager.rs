@@ -20,7 +20,6 @@ impl ServerManager {
 
     /// Start the Jellyfin server with isolated configuration
     pub fn start(&mut self) -> Result<()> {
-        // Check if port is available
         if !self.environment.is_port_available() {
             return Err(JellyfinError::invalid_input(
                 "port",
@@ -28,22 +27,40 @@ impl ServerManager {
             ));
         }
 
-        // Create directories if they don't exist
         self.environment.create_directories()?;
 
-        // For now, we'll use a placeholder for the actual server start
-        // In production, this would launch jellyfin with:
-        // --config-dir <config_dir> --data-dir <data_dir> --port <port>
+        let binary = Self::find_jellyfin_binary()?;
+
+        let child = std::process::Command::new(&binary)
+            .arg("--configdir")
+            .arg(&self.environment.config_dir)
+            .arg("--datadir")
+            .arg(&self.environment.data_dir)
+            .arg("--port")
+            .arg(self.environment.port.to_string())
+            .arg("--logdir")
+            .arg(self.environment.log_dir())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                JellyfinError::internal(format!("Failed to start Jellyfin server: {}", e))
+            })?;
+
+        let pid = child.id();
+        self.environment.server_pid = Some(pid);
+        self.environment.save_pid(pid)?;
+
         tracing::info!(
-            "Starting Jellyfin server on port {} with config: {}, data: {}",
+            "Started Jellyfin server on port {} (PID: {}) with config: {}, data: {}",
             self.environment.port,
+            pid,
             self.environment.config_dir.display(),
             self.environment.data_dir.display()
         );
 
-        // TODO: Implement actual process spawning
-        // This would typically use std::process::Command to launch jellyfin
-        // and store the PID for later management
+        // Drop the child handle so the process keeps running independently
+        drop(child);
 
         Ok(())
     }
@@ -52,7 +69,6 @@ impl ServerManager {
     pub fn wait_ready(&self, timeout: Duration) -> Result<()> {
         let start = std::time::Instant::now();
 
-        // Simple TCP connection check instead of HTTP health check
         while start.elapsed() < timeout {
             if std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::from(([127, 0, 0, 1], self.environment.port)),
@@ -74,13 +90,55 @@ impl ServerManager {
     }
 
     /// Stop the Jellyfin server
-    pub fn stop(&self) -> Result<()> {
+    pub fn stop(&mut self) -> Result<()> {
         if let Some(pid) = self.environment.server_pid {
             tracing::info!("Stopping Jellyfin server (PID: {})", pid);
 
-            // TODO: Implement actual process termination
-            // This would send SIGTERM to the process
+            #[cfg(unix)]
+            {
+                let kill_result = std::process::Command::new("kill")
+                    .arg("-TERM")
+                    .arg(pid.to_string())
+                    .output();
 
+                match kill_result {
+                    Ok(output) if output.status.success() => {
+                        // Wait for graceful shutdown
+                        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                        while std::time::Instant::now() < deadline {
+                            if !Self::is_process_running(pid) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(500));
+                        }
+                    }
+                    Ok(_) => {
+                        // Process may have already exited
+                        tracing::warn!(
+                            "kill -TERM {} did not succeed (process may have already exited)",
+                            pid
+                        );
+                    }
+                    Err(e) => {
+                        return Err(JellyfinError::internal(format!(
+                            "Failed to send SIGTERM to PID {}: {}",
+                            pid, e
+                        )));
+                    }
+                }
+            }
+
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F"])
+                    .output();
+            }
+
+            self.environment.server_pid = None;
+            self.environment.clear_pid()?;
+
+            tracing::info!("Stopped Jellyfin server (PID: {})", pid);
             Ok(())
         } else {
             tracing::warn!("No server PID set, server may not be running");
@@ -95,14 +153,12 @@ impl ServerManager {
             self.environment.data_dir.display()
         );
 
-        // Remove data directory
         if self.environment.data_dir.exists() {
             std::fs::remove_dir_all(&self.environment.data_dir).map_err(|e| {
                 JellyfinError::internal(format!("Failed to remove data directory: {}", e))
             })?;
         }
 
-        // Optionally remove config directory
         if self.environment.config_dir.exists() {
             std::fs::remove_dir_all(&self.environment.config_dir).map_err(|e| {
                 JellyfinError::internal(format!("Failed to remove config directory: {}", e))
@@ -110,6 +166,56 @@ impl ServerManager {
         }
 
         Ok(())
+    }
+
+    /// Check if a process with the given PID is still running
+    fn is_process_running(pid: u32) -> bool {
+        #[cfg(unix)]
+        {
+            std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+
+        #[cfg(windows)]
+        {
+            std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {}", pid)])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+                .unwrap_or(false)
+        }
+    }
+
+    /// Find the jellyfin binary in PATH or common locations
+    fn find_jellyfin_binary() -> Result<String> {
+        let candidates = ["jellyfin", "/usr/bin/jellyfin", "/usr/local/bin/jellyfin"];
+
+        for candidate in candidates {
+            if std::path::Path::new(candidate).is_file() {
+                return Ok(candidate.to_string());
+            }
+            // Check via `which` for PATH-based lookup
+            if let Ok(output) = std::process::Command::new("which")
+                .arg(candidate)
+                .output()
+            {
+                if output.status.success()
+                    && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+                {
+                    return Ok(String::from_utf8_lossy(&output.stdout)
+                        .trim()
+                        .to_string());
+                }
+            }
+        }
+
+        Err(JellyfinError::internal(
+            "jellyfin binary not found. Install Jellyfin server or add it to PATH.".to_string(),
+        ))
     }
 }
 
@@ -126,10 +232,9 @@ mod tests {
 
     #[test]
     fn test_wait_ready_timeout() {
-        let env = E2EEnvironment::new().with_port(0); // Use any available port
+        let env = E2EEnvironment::new().with_port(0);
         let manager = ServerManager::new(env);
 
-        // Should timeout since no server is running
         let result = manager.wait_ready(Duration::from_millis(100));
         assert!(result.is_err());
     }

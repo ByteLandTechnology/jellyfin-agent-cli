@@ -29,7 +29,7 @@ license = "MIT OR Apache-2.0"
 tokio = { version = "1.42", features = ["full"] }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 # Serialization
@@ -41,6 +41,12 @@ toml = { version = "0.8", features = ["preserve_order"] }
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 console = "0.15"
+
+# Progress bar
+indicatif = "0.17"
+
+# Stream utilities
+futures-util = "0.3"
 
 # Error handling
 thiserror = "2.0"

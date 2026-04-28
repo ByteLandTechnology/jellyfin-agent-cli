@@ -6,6 +6,7 @@ pub mod channels;
 pub mod config;
 pub mod context;
 pub mod devices;
+pub mod download;
 pub mod e2e;
 pub mod items;
 pub mod library;
