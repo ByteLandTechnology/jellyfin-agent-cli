@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/ByteLandTechnology/jellyfin-agent-cli/compare/v1.0.0...v1.1.0) (2026-05-22)
+
+### Features
+
+* implement playback remote control, media download, and E2E server management ([82339db](https://github.com/ByteLandTechnology/jellyfin-agent-cli/commit/82339db0f487d29d9b2e61e4676bc3a846d53a29))
+
 ## 1.0.0 (2026-04-28)
 
 ### Features
